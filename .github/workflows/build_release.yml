@@ -1,4 +1,4 @@
-name : Build and Release NativeBridge
+name: Build and Release NativeBridge
 
 on:
   push:
@@ -6,6 +6,10 @@ on:
   create:
     tags:
       - 'v*'
+
+permissions:
+  contents: write    # allow creating releases and uploading assets
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,21 +24,51 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # install rust toolchain in a reliable way (actions-rs/toolchain is commonly used)
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rs/toolchain@v1
         with:
-          targets: ${{ env.TARGET_ARCH }}
+          toolchain: stable
+          target: ${{ env.TARGET_ARCH }}
+          components: rust-src
+          override: true
 
       - name: Install Cross (Cross-Compilation Tool)
-        run: cargo install cross
+        run: |
+          cargo install --locked cross
 
       - name: Build Release Binary
-        run: cross build --release --target ${{ env.TARGET_ARCH }} --verbose
+        run: |
+          cross build --release --target ${{ env.TARGET_ARCH }} --verbose
 
       - name: Prepare Binaries
         run: |
-          mkdir output
-          cp target/${{ env.TARGET_ARCH }}/release/bridge_client output/andro
+          mkdir -p output
+          # copy server binary expected by the release step
+          if [ -f target/${{ env.TARGET_ARCH }}/release/bridge_server ]; then
+            cp target/${{ env.TARGET_ARCH }}/release/bridge_server output/bridge_server
+          elif [ -f target/release/bridge_server ]; then
+            # fallback to host target path (if cross put it here)
+            cp target/release/bridge_server output/bridge_server
+          else
+            echo "bridge_server not found" >&2
+            ls -la target || true
+            exit 1
+          fi
+
+          # copy client binary; name matches your original naming (output/andro)
+          if [ -f target/${{ env.TARGET_ARCH }}/release/bridge_client ]; then
+            cp target/${{ env.TARGET_ARCH }}/release/bridge_client output/andro
+          elif [ -f target/release/bridge_client ]; then
+            cp target/release/bridge_client output/andro
+          else
+            echo "bridge_client not found" >&2
+            ls -la target || true
+            exit 1
+          fi
+
+          chmod +x output/bridge_server || true
+          chmod +x output/andro || true
           ls -l output/
 
       - name: Upload Artifacts
@@ -44,7 +78,7 @@ jobs:
           path: output/*
 
       - name: Create Release
-        if: startswith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
           files: |
@@ -53,3 +87,5 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
