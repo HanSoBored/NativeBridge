@@ -94,17 +94,26 @@ sudo chmod +x /usr/local/bin/andro
 Simply call the client binary (alias `andro`) followed by the command you want to execute on the Android Host.
 
 ```bash
+# Help
+andro --help
+
 # Check User Identity
-andro "id"
+andro id
 
 # Take a Screenshots
-andro "screencap -p > /data/local/tmp/capture.png (or /sdcard)"
+andro screencap -p > /data/local/tmp/capture.png (or /sdcard)
 
 # Simulate Touch Input (Tap coordinates X Y)
-andro "input tap 500 500"
+andro tap 500 500
+
+# Simulate Swipe Input (Swipe Down)
+andro swipe 500 1500 500 500 300
 
 # Reboot Device
-andro "reboot"
+andro reboot
+
+# Use normal Shell / Exec
+andro exec dumpsys battery
 ```
 
 ## Potential Use Cases

@@ -2,7 +2,9 @@ use std::os::unix::net::UnixListener;
 use std::io::{Read, Write};
 use std::process::Command;
 use std::fs::OpenOptions;
+use std::time::Duration;
 use std::path::Path;
+use std::thread;
 use std::mem;
 use std::fs;
 
@@ -67,42 +69,6 @@ fn handle_client(socket: &mut std::os::unix::net::UnixStream) {
     }
 }
 
-fn execute_request(cmd: BridgeCommand) -> BridgeResponse {
-    match cmd {
-        // Logika Universal: untuk semua program
-        BridgeCommand::Exec { program, args } => {
-            println!("Exec: {} {:?}", program, args); // Logging di server
-
-            let output = Command::new(&program)
-                .args(args)
-                .output();
-
-            match output {
-                Ok(o) => {
-                    if o.status.success() {
-                        BridgeResponse::Success(String::from_utf8_lossy(&o.stdout).to_string())
-                    } else {
-                        // Jika command gagal (exit code !=0), Kirim stderr
-                        BridgeResponse::Error(String::from_utf8_lossy(&o.stderr).to_string())
-                    }
-                },
-                Err(e) => BridgeResponse::Error(format!("Gagal menjalankan {}: {}", program, e)),
-            }
-        },
-        BridgeCommand::Ping => BridgeResponse::Success("Pong!".to_string()),
-        // Direct Tap (Bypass Android Framework)
-        BridgeCommand::DirectTap { x, y } => {
-            if let Err(e) = inject_tap(x, y) {
-                return BridgeResponse::Error(format!("Tap Failed: {}", e));
-            }
-            BridgeResponse::Success("Tapped".to_string())
-        },
-        // DirectSwipe (unimplemented)
-        _ => BridgeResponse::Error("Feature not implemented yet".to_string()),
-
-    }
-}
-
 fn write_event(file: &mut std::fs::File, type_: u16, code: u16, value: i32) -> std::io::Result<()> {
     let ev = InputEvent {
         time_sec: 0, time_usec: 0, type_, code, value
@@ -138,6 +104,88 @@ fn inject_tap(x: i32, y: i32) -> std::io::Result<()> {
     write_event(&mut file, 0, 0, 0)?;
 
     Ok(())
+}
+
+fn inject_swipe(x1: i32, y1: i32, x2: i32, y2: i32, duration_ms: u64) -> std::io::Result<()> {
+    let mut file = OpenOptions::new().write(true).open(TOUCH_DEVICE)?;
+
+    // Hitung jumlah langkah (steps)
+    // Misal: update posisi setiap 10ms
+    let step_delay = 10;
+    let steps = (duration_ms / step_delay).max(1); // Minimal satu step_delay
+
+    // Hitung perubahan koordinat per step (delta)
+    let dx = (x2 - y1) as f32 / steps as f32;
+    let dy = (y2 - x1) as f32 / steps as f32;
+
+    // 1. Touch Down (Titik Awal)
+    write_event(&mut file, 3, 53, x1)?; // ABS_MT_POSITION_X
+    write_event(&mut file, 3, 54, y1)?; // ABS_MT_POSITION_Y
+    write_event(&mut file, 1, 330, 1)?; // BTN_TOUCH DOWN
+    write_event(&mut file, 0, 0, 0)?; // SYN_REPORT
+
+    // 2. Loop Gerakan (Interpolasi)
+    let mut current_x = x1 as f32;
+    let mut current_y = y1 as f32;
+
+    for _ in 0..steps {
+        current_x += dx;
+        current_y += dy;
+
+        // Update Posisi
+        write_event(&mut file, 3, 53, current_x as i32)?;
+        write_event(&mut file, 3, 54, current_y as i32)?;
+        write_event(&mut file, 0, 0, 0)?; 
+
+        thread::sleep(Duration::from_millis(step_delay));
+    }
+
+    // 3. Touch Up (Release)
+    write_event(&mut file, 3, 53, x2)?;
+    write_event(&mut file, 3, 54, y2)?;
+    write_event(&mut file, 1, 330, 0)?;
+    write_event(&mut file, 0, 0, 0,)?;
+
+    Ok(())
+}
+
+fn execute_request(cmd: BridgeCommand) -> BridgeResponse {
+    match cmd {
+        // Logika Universal: untuk semua program
+        BridgeCommand::Exec { program, args } => {
+            println!("Exec: {} {:?}", program, args); // Logging di server
+
+            let output = Command::new(&program)
+                .args(args)
+                .output();
+
+            match output {
+                Ok(o) => {
+                    if o.status.success() {
+                        BridgeResponse::Success(String::from_utf8_lossy(&o.stdout).to_string())
+                    } else {
+                        // Jika command gagal (exit code !=0), Kirim stderr
+                        BridgeResponse::Error(String::from_utf8_lossy(&o.stderr).to_string())
+                    }
+                },
+                Err(e) => BridgeResponse::Error(format!("Gagal menjalankan {}: {}", program, e)),
+            }
+        },
+        BridgeCommand::Ping => BridgeResponse::Success("Pong!".to_string()),
+        // Direct Tap (Bypass Android Framework)
+        BridgeCommand::DirectTap { x, y } => {
+            if let Err(e) = inject_tap(x, y) {
+                return BridgeResponse::Error(format!("Tap Failed: {}", e));
+            }
+            BridgeResponse::Success("Tapped".to_string())
+        },
+        BridgeCommand::DirectSwipe { x1, y1, x2, y2, duration_ms } => {
+            if let Err(e) = inject_swipe(x1, y1, x2, y2, duration_ms) {
+                return BridgeResponse::Error(format!("Swipe Failed: {}", e));
+            }
+            BridgeResponse::Success("Swiped".to_string())
+        },
+    }
 }
 
 // Struct Event Linux (Low Level)
