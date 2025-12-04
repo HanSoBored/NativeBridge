@@ -71,9 +71,8 @@ fn main() -> std::io::Result<()> {
     };
 
     // Kirim
-    let mut stream = UnixStream::connect(SOCKET_PATH).map_err(|e| {
+    let mut stream = UnixStream::connect(SOCKET_PATH).inspect_err(|e| {
         eprintln!("Gagal connect ke {}. Pastikan Server nyala!", SOCKET_PATH);
-        e
     })?;
 
     // Serialize Command ke Bytes (Bincode)
