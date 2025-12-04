@@ -1,8 +1,8 @@
-use std::os::unix::net::UnixListener;
-use std::io::{Read, Write};
-use std::process::Command;
-use std::path::Path;
 use std::fs;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixListener;
+use std::path::Path;
+use std::process::Command;
 
 use bridge_core::{BridgeCommand, BridgeResponse};
 
@@ -46,7 +46,9 @@ fn main() -> std::io::Result<()> {
 fn handle_client(socket: &mut std::os::unix::net::UnixStream) {
     let mut buffer = [0; 8192];
     if let Ok(size) = socket.read(&mut buffer) {
-        if size == 0 { return; }
+        if size == 0 {
+            return;
+        }
 
         let response = match bincode::deserialize::<BridgeCommand>(&buffer[0..size]) {
             Ok(cmd) => execute_request(cmd),
@@ -59,7 +61,7 @@ fn handle_client(socket: &mut std::os::unix::net::UnixStream) {
 }
 
 fn execute_request(cmd: BridgeCommand) -> BridgeResponse {
-    #[allow(unreachable_patterns)] 
+    #[allow(unreachable_patterns)]
     match cmd {
         // Logika Universal: untuk semua program
         BridgeCommand::Exec { program, args } => {
@@ -74,10 +76,10 @@ fn execute_request(cmd: BridgeCommand) -> BridgeResponse {
                         // Jika command gagal (exit code !=0), Kirim stderr
                         BridgeResponse::Error(String::from_utf8_lossy(&o.stderr).to_string())
                     }
-                },
+                }
                 Err(e) => BridgeResponse::Error(e.to_string()),
             }
-        },
+        }
         BridgeCommand::Ping => BridgeResponse::Success("Pong!".to_string()),
 
         // Command Extension jika feature direct_input aktif
@@ -88,17 +90,24 @@ fn execute_request(cmd: BridgeCommand) -> BridgeResponse {
                 Ok(_) => BridgeResponse::Success("".to_string()),
                 Err(e) => BridgeResponse::Error(format!("Tap Failed: {}", e)),
             }
-        },
+        }
 
         #[cfg(feature = "direct_input")]
-        BridgeCommand::DirectSwipe { x1, y1, x2, y2, duration_ms } => {
+        BridgeCommand::DirectSwipe {
+            x1,
+            y1,
+            x2,
+            y2,
+            duration_ms,
+        } => {
             // Panggil modul terpisah
             match input_manager::swipe(x1, y1, x2, y2, duration_ms) {
                 Ok(_) => BridgeResponse::Success("".to_string()),
                 Err(e) => BridgeResponse::Error(format!("Swipe Failed: {}", e)),
             }
-        },
-        _ => BridgeResponse::Error("Command not supported or feature disabled on server".to_string()),
+        }
+        _ => {
+            BridgeResponse::Error("Command not supported or feature disabled on server".to_string())
+        }
     }
 }
-

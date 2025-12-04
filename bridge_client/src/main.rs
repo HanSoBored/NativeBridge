@@ -1,6 +1,6 @@
-use std::os::unix::net::UnixStream;
 use clap::{Parser, Subcommand};
 use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 
 use bridge_core::{BridgeCommand, BridgeResponse};
 
@@ -51,10 +51,22 @@ fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     // Mapping dari CLI Clap ke BridgeCommand Core
-    let bridge_cmd = match cli.command{
+    let bridge_cmd = match cli.command {
         Commands::Exec { program, args } => BridgeCommand::Exec { program, args },
         Commands::Tap { x, y } => BridgeCommand::DirectTap { x, y },
-        Commands::Swipe { x1, y1, x2, y2, duration } => BridgeCommand::DirectSwipe { x1, y1, x2, y2, duration_ms: duration },
+        Commands::Swipe {
+            x1,
+            y1,
+            x2,
+            y2,
+            duration,
+        } => BridgeCommand::DirectSwipe {
+            x1,
+            y1,
+            x2,
+            y2,
+            duration_ms: duration,
+        },
         Commands::Ping => BridgeCommand::Ping,
     };
 
@@ -76,7 +88,8 @@ fn main() -> std::io::Result<()> {
         eprintln!("Server tidak memberikan respon.");
         return Ok(());
     }
-    let response: BridgeResponse = bincode::deserialize(&buffer).expect("Gagal deserialize response");
+    let response: BridgeResponse =
+        bincode::deserialize(&buffer).expect("Gagal deserialize response");
 
     match response {
         BridgeResponse::Success(msg) => {
@@ -85,7 +98,7 @@ fn main() -> std::io::Result<()> {
             } else if msg == "Pong!" {
                 println!("Pong! Server is alive.");
             }
-        },
+        }
         BridgeResponse::Error(err) => {
             eprintln!("Remote Error: {}", err);
         }
