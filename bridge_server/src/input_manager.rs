@@ -2,10 +2,10 @@
 #![cfg(feature = "direct_input")]
 
 use std::fs::OpenOptions;
-use std::time::Duration;
 use std::io::Write;
-use std::thread;
 use std::mem;
+use std::thread;
+use std::time::Duration;
 
 // Configuration Device
 // Ubah path sesuai touch device di getevent -pl cari eventx:ABS_MT_POSITION_X/Y
@@ -61,7 +61,13 @@ pub fn swipe(x1: i32, y1: i32, x2: i32, y2: i32, duration_ms: u64) -> std::io::R
 
 // Fungsi Private (Helper)
 fn write_event(file: &mut std::fs::File, type_: u16, code: u16, value: i32) -> std::io::Result<()> {
-    let ev = InputEvent { time_sec: 0, time_usec: 0, type_, code, value };
+    let ev = InputEvent {
+        time_sec: 0,
+        time_usec: 0,
+        type_,
+        code,
+        value,
+    };
     let bytes: &[u8] = unsafe {
         std::slice::from_raw_parts(&ev as *const _ as *const u8, mem::size_of::<InputEvent>())
     };
