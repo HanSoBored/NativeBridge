@@ -1,12 +1,11 @@
 use clap::{Parser, Subcommand};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::process;
 
 use bridge_core::{BridgeCommand, BridgeResponse};
 
 // Lokasi socket dilihat dari sisi Chroot
-// Asumsi: folder /data/local/tmp/chroot di-mount sebagai / (root) atau akses relatif
-// Jika di dalam Chroot ada folder /tmp yang mapping ke host, maka:
 const SOCKET_PATH: &str = "/tmp/bridge.sock";
 
 // Definisi CLI Struktur
@@ -20,39 +19,45 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    // Shell biasa (/system/bin/sh)
     Exec {
-        // Nama Program (misal: input, pm, am)
         program: String,
-        // Argumen program
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-
+    Stream {
+        program: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     Tap {
         x: i32,
         y: i32,
     },
-
     Swipe {
         x1: i32,
         y1: i32,
         x2: i32,
         y2: i32,
-        // Durasi swipe dalam milidetik (default: 300ms)
         #[arg(default_value_t = 300)]
         duration: u64,
     },
-    // Cek Koneksi Server
     Ping,
 }
 
 fn main() -> std::io::Result<()> {
-    let cli = Cli::parse();
+    // Menangani Ctrl+C
+    ctrlc::set_handler(move || {
+        println!("\nExiting...");
+        process::exit(0);
+    })
+    .expect("Error setting Ctrl-C handler");
 
-    // Mapping dari CLI Clap ke BridgeCommand Core
+    let cli = Cli::parse();
+    let is_streaming = matches!(cli.command, Commands::Stream { .. });
+
     let bridge_cmd = match cli.command {
         Commands::Exec { program, args } => BridgeCommand::Exec { program, args },
+        Commands::Stream { program, args } => BridgeCommand::Stream { program, args },
         Commands::Tap { x, y } => BridgeCommand::DirectTap { x, y },
         Commands::Swipe {
             x1,
@@ -70,36 +75,89 @@ fn main() -> std::io::Result<()> {
         Commands::Ping => BridgeCommand::Ping,
     };
 
-    // Kirim
     let mut stream = UnixStream::connect(SOCKET_PATH).inspect_err(|_e| {
-        eprintln!("Gagal connect ke {}. Pastikan Server nyala!", SOCKET_PATH);
+        eprintln!(
+            "Failed to connect to {}. Is the server running?",
+            SOCKET_PATH
+        );
     })?;
 
-    // Serialize Command ke Bytes (Bincode)
-    let bin_payload = bincode::serialize(&bridge_cmd).expect("Gagal serialize");
+    let bin_payload = bincode::serialize(&bridge_cmd).expect("Failed to serialize command");
     stream.write_all(&bin_payload)?;
 
-    // Baca Response
-    // Bincode butuh byte array, bukan String
-    let mut buffer = Vec::new();
-    stream.read_to_end(&mut buffer)?;
-    if buffer.is_empty() {
-        eprintln!("Server tidak memberikan respon.");
+    if is_streaming {
+        handle_stream_response(&mut stream)
+    } else {
+        handle_single_response(&mut stream)
+    }
+}
+
+fn handle_stream_response(stream: &mut UnixStream) -> std::io::Result<()> {
+    loop {
+        // Baca 8 byte pertama untuk mendapatkan ukuran payload
+        let mut len_bytes = [0u8; 8];
+        if stream.read_exact(&mut len_bytes).is_err() {
+            break;
+        }
+        let len = u64::from_be_bytes(len_bytes);
+
+        // Baca payload sesuai ukuran yang didapat
+        let mut buffer = vec![0u8; len as usize];
+        stream.read_exact(&mut buffer)?;
+
+        let response: BridgeResponse =
+            bincode::deserialize(&buffer).expect("Failed to deserialize stream response");
+
+        match response {
+            BridgeResponse::StreamChunk(msg) => {
+                println!("{}", msg);
+            }
+            BridgeResponse::StreamEnd => {
+                break; // Streaming selesai
+            }
+            BridgeResponse::Error(err) => {
+                eprintln!("Remote Error: {}", err);
+                break;
+            }
+            _ => {
+                eprintln!("Received unexpected response type during stream.");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_single_response(stream: &mut UnixStream) -> std::io::Result<()> {
+    let mut len_bytes = [0u8; 8];
+    if stream.read_exact(&mut len_bytes).is_err() {
+        eprintln!("Server did not provide a response.");
         return Ok(());
     }
+    let len = u64::from_be_bytes(len_bytes);
+
+    if len == 0 {
+        return Ok(());
+    }
+
+    let mut buffer = vec![0u8; len as usize];
+    stream.read_exact(&mut buffer)?;
+
     let response: BridgeResponse =
-        bincode::deserialize(&buffer).expect("Gagal deserialize response");
+        bincode::deserialize(&buffer).expect("Failed to deserialize response");
 
     match response {
         BridgeResponse::Success(msg) => {
-            if !msg.is_empty() && msg != "Tapped" && msg != "Swiped" && msg != "Pong!" {
-                print!("{}", msg);
-            } else if msg == "Pong!" {
+            if msg == "Pong!" {
                 println!("Pong! Server is alive.");
+            } else if !msg.is_empty() {
+                print!("{}", msg);
             }
         }
         BridgeResponse::Error(err) => {
             eprintln!("Remote Error: {}", err);
+        }
+        _ => {
+            eprintln!("Received unexpected response type for single command.");
         }
     }
 
