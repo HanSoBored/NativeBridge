@@ -9,7 +9,7 @@ use std::time::Duration;
 
 // Configuration Device
 // Ubah path sesuai touch device di getevent -pl cari eventx:ABS_MT_POSITION_X/Y
-const TOUCH_DEVICE: &str = "/dev/input/event2";
+const TOUCH_DEVICE: &str = "/dev/input/event1";
 
 // Struktur Data Internal Linux
 #[repr(C)]
