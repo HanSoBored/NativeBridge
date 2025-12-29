@@ -10,6 +10,12 @@ pub enum BridgeCommand {
         args: Vec<String>,
     },
 
+    // Perintah untuk menjalankan proses yang berjalan lama dan men-stream output-nya
+    Stream {
+        program: String,
+        args: Vec<String>,
+    },
+
     // tetap bisa simpan perintah khusus untuk utility lain
     Ping,
     // Add: Direct Input untuk peforma input zero latency
@@ -28,6 +34,8 @@ pub enum BridgeCommand {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum BridgeResponse {
-    Success(String), // Berisi stdout
-    Error(String),   // Berisi stderr
+    Success(String),     // Berisi stdout untuk command non-streaming
+    Error(String),       // Berisi stderr atau pesan error umum
+    StreamChunk(String), // Satu bagian (chunk) dari output stream
+    StreamEnd,           // Sinyal bahwa streaming telah selesai
 }
