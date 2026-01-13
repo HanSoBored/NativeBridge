@@ -117,15 +117,18 @@ Simply call `andro` followed by the subcommand.
 ### 1. General Execution
 Run any command as if you were in the Android Root Shell.
 ```bash
-# Check User Identity
-andro exec id
+# Check User Identity (flag -e / exec)
+andro -e id
 # Output: uid=0(root) gid=0(root) ...
 
 # Check Battery Status
-andro exec dumpsys battery
+andro -e dumpsys battery
 
 # Reboot Device
-andro exec reboot
+andro -e reboot
+
+# Monitoring Logcat Android Real-Time (flag -s / stream)
+andro -s logcat
 ```
 
 ### 2. Direct Input (Kernel Injection)
@@ -144,7 +147,7 @@ andro swipe 500 1500 500 500 300
 Capture the Android screen and save it directly to the Chroot filesystem.
 ```bash
 # Capture and redirect output to a file
-andro exec screencap -p > /home/user/capture.png
+andro -e screencap -p > /home/user/capture.png
 ```
 
 ### 4. Utilities
