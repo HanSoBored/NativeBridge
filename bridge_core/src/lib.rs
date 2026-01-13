@@ -2,23 +2,23 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum BridgeCommand {
-    // Perintah Generic untuk menjalankan program binary Android Host apapun
-    // program: nama binary (contoh: "input", "am", "pm", "ls")
-    // args: daftar argumen
+    // Generic command to execute any Android Host binary program
+    // program: binary name (e.g., "input", "am", "pm", "ls")
+    // args: list of arguments
     Exec {
         program: String,
         args: Vec<String>,
     },
 
-    // Perintah untuk menjalankan proses yang berjalan lama dan men-stream output-nya
+    // Command to run a long-running process and stream its output
     Stream {
         program: String,
         args: Vec<String>,
     },
 
-    // tetap bisa simpan perintah khusus untuk utility lain
     Ping,
-    // Add: Direct Input untuk peforma input zero latency
+    // Direct input commands for low-latency interaction with kernel events.
+    // This feature requires the "direct_input" flag during compilation.
     DirectTap {
         x: i32,
         y: i32,
@@ -34,8 +34,8 @@ pub enum BridgeCommand {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum BridgeResponse {
-    Success(String),     // Berisi stdout untuk command non-streaming
-    Error(String),       // Berisi stderr atau pesan error umum
-    StreamChunk(String), // Satu bagian (chunk) dari output stream
-    StreamEnd,           // Sinyal bahwa streaming telah selesai
+    Success(String),     // Contains stdout for non-streaming commands
+    Error(String),       // Contains stderr or general error messages
+    StreamChunk(String), // One chunk of the stream output
+    StreamEnd,           // Signals that streaming has finished
 }
