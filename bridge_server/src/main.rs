@@ -11,19 +11,21 @@ use bridge_core::{BridgeCommand, BridgeResponse};
 #[cfg(feature = "direct_input")]
 mod input_manager;
 
-// Lokasi socket dillihat dari sisi Android Host
-// Pastikan path ini mengarah ke folder yang bisa dibaca oleh Chroot
+// Unix socket location, as seen from the Android Host side.
+// This path must be accessible from within the chroot environment.
 const SOCKET_PATH: &str = "/data/local/rootfs/ubuntu-resolute-26.04/tmp/bridge.sock";
 
 fn main() -> std::io::Result<()> {
-    // Bersihkan socket lama jika ada
+    // Ensure there are no leftover socket files from a previous session that could cause an error.
     if Path::new(SOCKET_PATH).exists() {
         fs::remove_file(SOCKET_PATH)?;
     }
 
     let listener = UnixListener::bind(SOCKET_PATH)?;
+    // Change the socket file permissions to be accessible by all users,
+    // including processes running inside the chroot with a different user.
     Command::new("chmod").arg("777").arg(SOCKET_PATH).output()?;
-    println!("Server Bridge aktif di: {}", SOCKET_PATH);
+    println!("Bridge Server active at: {}", SOCKET_PATH);
 
     #[cfg(feature = "direct_input")]
     println!(" [Feature Enabled] Direct Kernel Input Module Loaded");
@@ -31,20 +33,24 @@ fn main() -> std::io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut socket) => {
-                // Gunakan thread untuk setiap koneksi agar tidak memblokir listener
+                // Each client connection is handled in a separate thread.
+                // This prevents one client from blocking others that want to connect,
+                // which is important for handling multiple requests simultaneously.
                 thread::spawn(move || {
                     handle_client(&mut socket);
                 });
             }
             Err(err) => {
-                eprintln!("Gagal menerima koneksi: {}", err);
+                eprintln!("Failed to accept connection: {}", err);
             }
         }
     }
     Ok(())
 }
 
-// Helper untuk menulis response dengan prefix ukuran (length-prefixed)
+// Helper to send a response to the client with a length-prefix protocol.
+// [8-byte data length][data]
+// This ensures the client can read the message correctly, even if the data is fragmented.
 fn write_response(socket: &mut UnixStream, response: &BridgeResponse) -> std::io::Result<()> {
     let bytes = bincode::serialize(response).unwrap();
     let len = bytes.len() as u64;
@@ -62,7 +68,6 @@ fn handle_client(socket: &mut UnixStream) {
 
         match bincode::deserialize::<BridgeCommand>(&buffer[0..size]) {
             Ok(cmd) => {
-                // Pisahkan logika streaming dan non-streaming
                 if let BridgeCommand::Stream { program, args } = cmd {
                     handle_stream_request(socket, program, args);
                 } else {
@@ -79,7 +84,7 @@ fn handle_client(socket: &mut UnixStream) {
 }
 
 fn handle_stream_request(socket: &mut UnixStream, program: String, args: Vec<String>) {
-    println!("Stream: {} {:?}", program, args); // Logging di server
+    println!("Stream: {} {:?}", program, args);
 
     let child = Command::new(&program)
         .args(args)
@@ -99,7 +104,9 @@ fn handle_stream_request(socket: &mut UnixStream, program: String, args: Vec<Str
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    // Gunakan Arc<Mutex<>> untuk share socket antar thread dengan aman
+    // The `socket` needs to be accessed from multiple threads (for stdout and stderr).
+    // `Arc` (Atomic Reference Counting) allows for shared ownership.
+    // `Mutex` (Mutual Exclusion) ensures that only one thread can write to the socket at a time.
     let socket = Arc::new(Mutex::new(socket.try_clone().unwrap()));
 
     let stdout_socket = Arc::clone(&socket);
@@ -109,7 +116,7 @@ fn handle_stream_request(socket: &mut UnixStream, program: String, args: Vec<Str
             let response = BridgeResponse::StreamChunk(line_content);
             let mut socket_guard = stdout_socket.lock().unwrap();
             if write_response(&mut socket_guard, &response).is_err() {
-                break; // Klien menutup koneksi
+                break; // Stop if the client closes the connection
             }
         }
     });
@@ -118,11 +125,11 @@ fn handle_stream_request(socket: &mut UnixStream, program: String, args: Vec<Str
     let stderr_thread = thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line_content in reader.lines().map_while(Result::ok) {
-            // Kirim stderr sebagai chunk juga, klien bisa membedakannya jika perlu
+            // Output from stderr is also sent as a StreamChunk, with a prefix for identification.
             let response = BridgeResponse::StreamChunk(format!("[STDERR] {}", line_content));
             let mut socket_guard = stderr_socket.lock().unwrap();
             if write_response(&mut socket_guard, &response).is_err() {
-                break; // Klien menutup koneksi
+                break; // Stop if the client closes the connection
             }
         }
     });
@@ -131,7 +138,7 @@ fn handle_stream_request(socket: &mut UnixStream, program: String, args: Vec<Str
     stderr_thread.join().unwrap();
 
     let _ = child.wait();
-    // Kirim sinyal akhir setelah semua selesai
+    // Send the final signal to notify the client that all output has been sent.
     let mut socket_guard = socket.lock().unwrap();
     let _ = write_response(&mut socket_guard, &BridgeResponse::StreamEnd);
 }
@@ -140,7 +147,22 @@ fn execute_request(cmd: BridgeCommand) -> BridgeResponse {
     #[allow(unreachable_patterns)]
     match cmd {
         BridgeCommand::Exec { program, args } => {
-            println!("Exec: {} {:?}", program, args); // Logging di server
+            println!("Exec: {} {:?}", program, args);
+
+            if program == "logcat" {
+                // We only allow `logcat -d` and `logcat -c` with exec.
+                // Any other `logcat` command should be streamed to avoid blocking.
+                let is_valid_exec_logcat = match args.len() {
+                    1 => args[0] == "-d" || args[0] == "-c",
+                    _ => false, // Disallow `logcat` with no args or multiple args via exec
+                };
+
+                if !is_valid_exec_logcat {
+                    return BridgeResponse::Error(
+                        "For live logcat, use the -s flag. Only 'logcat -d' and 'logcat -c' are allowed with -e.".to_string()
+                    );
+                }
+            }
 
             let output = Command::new(&program).args(args).output();
             match output {
